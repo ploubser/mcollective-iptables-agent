@@ -3,19 +3,7 @@ require 'socket'
 module MCollective
   module Agent
     # An agent that manipulates a chain called 'junkfilter' with iptables
-    #
-    # See http://projects.puppetlabs.com/projects/mcollective-plugins/wiki/AgentIptablesJunkfilter
-    #
-    # Released under the terms of the GPL
     class Iptables<RPC::Agent
-      metadata    :name        => "iptables",
-                  :description => "An agent that manipulates a chain called 'junkfilter' with iptables",
-                  :author      => "R.I.Pienaar",
-                  :license     => "Apache 2",
-                  :version     => "2.1",
-                  :url         => "http://projects.puppetlabs.com/projects/mcollective-plugins/wiki",
-                  :timeout     => 2
-
       action "block" do
         validate :ipaddr, :ipv4address
 
@@ -31,30 +19,57 @@ module MCollective
       action "isblocked" do
         validate :ipaddr, :ipv4address
 
-        isblocked(request[:ipaddr])
+        if Iptables.isblocked?(request[:ipaddr])
+          reply[:output] = "#{request[:ipaddr]} is blocked"
+        else
+          reply[:output] = "#{request[:ipaddr]} is not blocked"
+        end
       end
 
       action "listblocked" do
         reply[:blocked] = listblocked
       end
 
+      # Utility to figure out if a ip is blocked or not, just return true or false
+      def self.isblocked?(ip)
+        Log.debug("Checking if #{ip} is blocked with target #{Iptables.target}")
+
+        prematches = ""
+        Shell.new("/sbin/iptables -L junk_filter -n 2>&1", :stdout => prematches, :chomp => true).runcommand
+
+        matches = prematches.split("\n").grep(/^#{Iptables.target}.+#{ip}/).size
+        matches >= 1
+      end
+
+      # Returns the target to use for rules
+      def self.target
+        config = Config.instance
+        target = "DROP"
+
+        if config.pluginconf.include?("iptables.target")
+          target = config.pluginconf["iptables.target"]
+        end
+
+        target
+      end
+
       private
       # Deals with requests to block an ip
       def blockip(ip)
-        logger.debug("Blocking #{ip} with target #{target}")
+        logger.debug("Blocking #{ip} with target #{Iptables.target}")
 
         out = ""
 
         # if he's already blocked we just dont bother doing it again
-        unless isblocked?(ip)
-          run("/sbin/iptables -A junk_filter -s #{ip} -j #{target} 2>&1", :stdout => out, :chomp => true)
-          run("/usr/bin/logger -i -t mcollective 'Attempted to add #{ip} to iptables junk_filter chain on #{Socket.gethostname}'")
+        unless Iptables.isblocked?(ip)
+          Shell.new("/sbin/iptables -A junk_filter -s #{ip} -j #{Iptables.target} 2>&1", :stdout => out, :chomp => true).runcommand
+          Shell.new("/usr/bin/logger -i -t mcollective 'Attempted to add #{ip} to iptables junk_filter chain on #{Socket.gethostname}'").runcommand
         else
           reply.fail! "#{ip} was already blocked"
           return
         end
 
-        if isblocked?(ip)
+        if Iptables.isblocked?(ip)
           unless out == ""
             reply[:output] = out
           else
@@ -67,21 +82,21 @@ module MCollective
 
       # Deals with requests to unblock an ip
       def unblockip(ip)
-        logger.debug("Unblocking #{ip} with target #{target}")
+        logger.debug("Unblocking #{ip} with target #{Iptables.target}")
 
         out = ""
 
         # remove it if it's blocked
-        if isblocked?(ip)
-          run("/sbin/iptables -D junk_filter -s #{ip} -j #{target} 2>&1", :stdout => out, :chomp => true)
-          run("/usr/bin/logger -i -t mcollective 'Attempted to remove #{ip} from iptables junk_filter chain on #{Socket.gethostname}'")
+        if Iptables.isblocked?(ip)
+          Shell.new("/sbin/iptables -D junk_filter -s #{ip} -j #{Iptables.target} 2>&1", :stdout => out, :chomp => true).runcommand
+          Shell.new("/usr/bin/logger -i -t mcollective 'Attempted to remove #{ip} from iptables junk_filter chain on #{Socket.gethostname}'").runcommand
         else
           reply.fail! "#{ip} was already unblocked"
           return
         end
 
         # check it was removed
-        if isblocked?(ip)
+        if Iptables.isblocked?(ip)
           reply.fail! "IP left blocked, iptables says: #{out}"
         else
           unless out == ""
@@ -92,44 +107,13 @@ module MCollective
         end
       end
 
-      # Deals with requests for status of a ip
-      def isblocked(ip)
-        if isblocked?(ip)
-          reply[:output] = "#{ip} is blocked"
-        else
-          reply[:output] = "#{ip} is not blocked"
-        end
-      end
-
-      # Utility to figure out if a ip is blocked or not, just return true or false
-      def isblocked?(ip)
-        logger.debug("Checking if #{ip} is blocked with target #{target}")
-
-        prematches = ""
-        run("/sbin/iptables -L junk_filter -n 2>&1", :stdout => prematches, :chomp => true)
-
-        matches = prematches.split("\n").grep(/^#{target}.+#{ip}/).size
-        matches >= 1
-      end
-
       # Returns a list of blocked ips
       def listblocked
         preout = ""
-        run("/sbin/iptables -L junk_filter -n 2>&1", :stdout => preout, :chomp => true)
+        Shell.new("/sbin/iptables -L junk_filter -n 2>&1", :stdout => preout, :chomp => true).runcommand
 
-        out = preout.split("\n").grep(/^#{target}/)
+        out = preout.split("\n").grep(/^#{Iptables.target}/)
         out.map {|l| l.split(/\s+/)[3]}
-      end
-
-      # Returns the target to use for rules
-      def target
-        target = "DROP"
-
-        if @config.pluginconf.include?("iptables.target")
-          target = @config.pluginconf["iptables.target"]
-        end
-
-        target
       end
     end
   end

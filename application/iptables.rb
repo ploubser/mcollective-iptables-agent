@@ -16,10 +16,7 @@ class MCollective::Application::Iptables<MCollective::Application
 
   def validate_configuration(configuration)
     raise "Command should be one of block, unblock or isblocked" unless configuration[:command] =~ /^block|unblock|isblocked$/
-
-    require 'ipaddr'
-    ip = IPAddr.new(configuration[:ipaddress])
-    raise "#{configuration[:ipaddress]} should be an ipv4 address" unless ip.ipv4?
+    MCollective::Validator.validate(configuration[:ipaddress], :ipv4address)
   end
 
   def main

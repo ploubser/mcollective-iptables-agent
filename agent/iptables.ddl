@@ -44,4 +44,7 @@ action "isblocked", :description => "Check if an IP is blocked" do
     output :output,
            :description => "Human readable indication if the IP is blocked or not",
            :display_as  => "Result"
+    summarize do
+      aggregate hosts(:output)
+    end
 end
